@@ -356,6 +356,36 @@ const PatientDashboard = () => {
     }
   };
 
+  // Add a new function to handle revoking access
+  const handleRevokeAccess = async (doctorAddress) => {
+    try {
+      if (!window.ethereum) throw new Error("MetaMask not installed");
+      await window.ethereum.request({ method: "eth_requestAccounts" });
+
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const contract = new ethers.Contract(
+        CONTRACT_ADDRESS,
+        ContractABI.abi,
+        signer
+      );
+
+      // Revoke access via smart contract
+      const tx = await contract.revokeAccess(doctorAddress);
+      console.log("Transaction submitted, waiting for confirmation...");
+      const receipt = await tx.wait();
+      console.log("Transaction confirmed:", receipt);
+
+      showAlert(`Access revoked for doctor: ${doctorAddress}`, "success");
+
+      // Refresh the list of granted accesses
+      await checkGrantedAccesses();
+    } catch (err) {
+      console.error("Error revoking access:", err);
+      showAlert("Failed to revoke access: " + err.message, "error");
+    }
+  };
+
   const showAlert = (message, severity) => {
     setNotification({ open: true, message, severity });
   };
@@ -584,6 +614,18 @@ const PatientDashboard = () => {
                       </>
                     }
                   />
+                  {/* Add Revoke button if access is granted and not expired */}
+                  {access.granted && !access.isExpired && (
+                    <Button
+                      variant="outlined"
+                      color="error"
+                      size="small"
+                      onClick={() => handleRevokeAccess(access.address)}
+                      sx={{ ml: 2 }}
+                    >
+                      Revoke Access
+                    </Button>
+                  )}
                 </ListItem>
                 <Divider />
               </React.Fragment>

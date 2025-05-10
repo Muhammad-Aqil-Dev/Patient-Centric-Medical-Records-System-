@@ -25,6 +25,7 @@ contract PatientRecords {
 
     event RecordUploaded(address indexed patient, string ipfsHash);
     event AccessGranted(address indexed patient, address indexed doctor, uint expiresAt);
+    event AccessRevoked(address indexed patient, address indexed doctor);
 
     // Patient uploads or updates their record
     function uploadRecord(string calldata ipfsHash) external {
@@ -46,6 +47,16 @@ contract PatientRecords {
         
         accessControl[msg.sender][doctor] = Access(true, expiresAt);
         emit AccessGranted(msg.sender, doctor, expiresAt);
+    }
+
+    // NEW FUNCTION: Patient revokes access from a doctor
+    function revokeAccess(address doctor) external {
+        require(accessControl[msg.sender][doctor].granted, "No access granted to revoke");
+        
+        // Set granted to false and expiresAt to current timestamp (effectively expired)
+        accessControl[msg.sender][doctor] = Access(false, block.timestamp);
+        
+        emit AccessRevoked(msg.sender, doctor);
     }
 
     // Doctor retrieves patient record if access is granted and not expired
