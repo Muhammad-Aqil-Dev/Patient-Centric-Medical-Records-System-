@@ -19,13 +19,14 @@ import {
   ListItem,
   ListItemText,
   Divider,
+  CircularProgress,
 } from "@mui/material";
 import axios from "axios";
 import { ethers } from "ethers";
 import ContractABI from "../artifacts/contracts/PatientRecords.sol/PatientRecords.json"; // Your compiled ABI
 const CONTRACT_ADDRESS = "0x5FbDB2315678afecb367f032d93F642f64180aa3"; // Updated contract address
 
-const PatientDashboard = ({ session }) => {
+const PatientDashboard = () => {
   const [file, setFile] = useState(null);
   const [doctors, setDoctors] = useState([]);
   const [selectedDoctor, setSelectedDoctor] = useState("");
@@ -39,6 +40,10 @@ const PatientDashboard = ({ session }) => {
   const [grantedAccesses, setGrantedAccesses] = useState([]);
   const [checkingAccess, setCheckingAccess] = useState(false);
   const [doctorAddress, setDoctorAddress] = useState("");
+  const [manualDoctorAddress, setManualDoctorAddress] = useState("");
+  const [manualExpiryDate, setManualExpiryDate] = useState("");
+  const [isGranting, setIsGranting] = useState(false);
+  const [currentPatientAddress, setCurrentPatientAddress] = useState("");
 
   useEffect(() => {
     // Fetch doctor list from backend
@@ -51,6 +56,24 @@ const PatientDashboard = ({ session }) => {
       }
     };
     fetchDoctors();
+
+    // Get patient's own address
+    if (window.ethereum) {
+      window.ethereum
+        .request({ method: "eth_requestAccounts" })
+        .then((accounts) => {
+          if (accounts[0]) {
+            try {
+              const normalized = ethers.getAddress(accounts[0]);
+              setCurrentPatientAddress(normalized);
+              console.log("Patient's wallet address:", normalized);
+            } catch (error) {
+              console.error("Error normalizing address:", error);
+            }
+          }
+        })
+        .catch((err) => console.error("Error getting accounts:", err));
+    }
   }, []);
 
   const handleUpload = async () => {
@@ -136,6 +159,8 @@ const PatientDashboard = ({ session }) => {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
       const patientAddress = await signer.getAddress();
+      console.log("Patient address:", patientAddress);
+
       const contract = new ethers.Contract(
         CONTRACT_ADDRESS,
         ContractABI.abi,
@@ -262,6 +287,75 @@ const PatientDashboard = ({ session }) => {
     }
   };
 
+  // Direct granting of access for emergency testing
+  const handleDirectGrantAccess = async () => {
+    if (!manualDoctorAddress || !manualExpiryDate) {
+      return showAlert(
+        "Please enter a doctor address and expiry time.",
+        "warning"
+      );
+    }
+
+    setIsGranting(true);
+    try {
+      // Validate and normalize the doctor address
+      let doctorAddr;
+      try {
+        doctorAddr = ethers.getAddress(manualDoctorAddress);
+      } catch (error) {
+        showAlert("Invalid doctor address format", "error");
+        return;
+      }
+
+      // Convert expiry time to a Unix timestamp (seconds)
+      const expiryDate = new Date(manualExpiryDate);
+      const expiryTimestamp = Math.floor(expiryDate.getTime() / 1000);
+
+      console.log(
+        `Granting access to doctor ${doctorAddr} until ${expiryDate.toLocaleString()} (${expiryTimestamp})`
+      );
+
+      // Connect to blockchain
+      if (!window.ethereum) throw new Error("MetaMask not installed");
+      await window.ethereum.request({ method: "eth_requestAccounts" });
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const patientAddress = await signer.getAddress();
+      console.log("Patient address (granting access):", patientAddress);
+
+      const contract = new ethers.Contract(
+        CONTRACT_ADDRESS,
+        ContractABI.abi,
+        signer
+      );
+
+      // Grant access via smart contract
+      const tx = await contract.grantAccess(doctorAddr, expiryTimestamp);
+
+      // Wait for the transaction to be mined
+      console.log("Transaction submitted, waiting for confirmation...");
+      const receipt = await tx.wait();
+      console.log("Transaction confirmed:", receipt);
+
+      // Verify the access was granted
+      const accessInfo = await contract.accessControl(
+        patientAddress,
+        doctorAddr
+      );
+      console.log("Access info after granting:", accessInfo);
+
+      showAlert(
+        `Access granted successfully to doctor ${doctorAddr}`,
+        "success"
+      );
+    } catch (err) {
+      console.error("Error with direct access grant:", err);
+      showAlert("Failed to grant access: " + err.message, "error");
+    } finally {
+      setIsGranting(false);
+    }
+  };
+
   const showAlert = (message, severity) => {
     setNotification({ open: true, message, severity });
   };
@@ -271,6 +365,26 @@ const PatientDashboard = ({ session }) => {
       <Typography variant="h4" gutterBottom>
         Patient Dashboard
       </Typography>
+
+      {/* Display patient wallet address at the top */}
+      <Paper elevation={1} sx={{ p: 2, mb: 3, bgcolor: "#f0f7ff" }}>
+        <Typography variant="subtitle1" gutterBottom>
+          Your Wallet Address
+        </Typography>
+        <Typography
+          variant="body2"
+          sx={{
+            fontFamily: "monospace",
+            p: 1,
+            bgcolor: "#e3f2fd",
+            borderRadius: 1,
+            wordBreak: "break-all",
+          }}
+        >
+          {currentPatientAddress || "Not connected to MetaMask"}
+        </Typography>
+      </Paper>
+
       <Box my={3}>
         <Typography variant="h6">Upload Medical Record</Typography>
         <Input type="file" onChange={(e) => setFile(e.target.files[0])} />
@@ -327,6 +441,71 @@ const PatientDashboard = ({ session }) => {
           Grant Access
         </Button>
       </Box>
+
+      {/* Improved Direct Doctor Access Grant section */}
+      <Paper
+        elevation={3}
+        sx={{
+          p: 3,
+          mt: 4,
+          mb: 4,
+          bgcolor: "#e8f5e9",
+          border: "1px solid #4caf50",
+        }}
+      >
+        <Typography
+          variant="h5"
+          color="primary"
+          gutterBottom
+          sx={{ fontWeight: "bold" }}
+        >
+          Emergency Direct Access Grant
+        </Typography>
+        <Typography variant="body2" paragraph>
+          Use this section to directly grant access to a doctor by entering
+          their wallet address. This is the most reliable way to ensure correct
+          access control.
+        </Typography>
+
+        <Alert severity="info" sx={{ mb: 2 }}>
+          Copy the doctor's wallet address directly from their dashboard to
+          ensure it matches exactly.
+        </Alert>
+
+        <TextField
+          label="Doctor Wallet Address"
+          placeholder="0x..."
+          fullWidth
+          variant="outlined"
+          value={manualDoctorAddress}
+          onChange={(e) => setManualDoctorAddress(e.target.value)}
+          sx={{ mt: 2, mb: 2 }}
+        />
+
+        <Input
+          type="datetime-local"
+          value={manualExpiryDate}
+          onChange={(e) => setManualExpiryDate(e.target.value)}
+          placeholder="Expiry Date"
+          fullWidth
+          sx={{ mb: 2 }}
+        />
+
+        <Button
+          variant="contained"
+          color="success"
+          onClick={handleDirectGrantAccess}
+          disabled={isGranting}
+          fullWidth
+          size="large"
+          startIcon={
+            isGranting ? <CircularProgress size={20} color="inherit" /> : null
+          }
+          sx={{ py: 1.5 }}
+        >
+          {isGranting ? "Granting Access..." : "Grant Direct Access"}
+        </Button>
+      </Paper>
 
       {/* Display Granted Accesses */}
       <Paper elevation={2} sx={{ p: 3, mt: 4 }}>

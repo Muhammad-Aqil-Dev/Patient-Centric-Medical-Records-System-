@@ -1,111 +1,160 @@
-import React, { useState, useEffect } from 'react';
-import { Container, Typography, Button, MenuItem, Select, InputLabel, FormControl, TextField, Grid, Card, CardContent } from '@mui/material';
-import { ethers } from 'ethers';
-import axios from 'axios';
-import PatientRecordsABI from '../artifacts/contracts/PatientRecords.sol/PatientRecords.json';
+import React, { useState } from "react";
+import { Button, Container, Typography, Box, Alert, Link } from "@mui/material";
+import { useNavigate } from "react-router-dom";
+import axios from "axios";
+import { ethers } from "ethers";
 
-const CONTRACT_ADDRESS = '0xaC303cb168e0486F311B81Beb65244498d744254';
+const SignIn = () => {
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
 
-const Dashboard = ({ user }) => {
-  const [file, setFile] = useState(null);
-  const [doctors, setDoctors] = useState([]);
-  const [selectedDoctor, setSelectedDoctor] = useState('');
-  const [expiresAt, setExpiresAt] = useState('');
+  const connectWallet = async () => {
+    setLoading(true);
+    setError(null);
 
-  useEffect(() => {
-    axios.get('/api/doctors')
-      .then((res) => setDoctors(res.data))
-      .catch((err) => console.error('Failed to load doctors', err));
-  }, []);
+    try {
+      if (!window.ethereum) {
+        throw new Error(
+          "MetaMask not installed. Please install MetaMask to continue."
+        );
+      }
 
-  const handleFileChange = (e) => setFile(e.target.files[0]);
+      // Request account access
+      const accounts = await window.ethereum.request({
+        method: "eth_requestAccounts",
+      });
+      const walletAddress = accounts[0];
 
-  const handleUpload = async () => {
-    if (!file) return;
-    const formData = new FormData();
-    formData.append('file', file);
+      // Verify user type (patient or doctor) in the database
+      const response = await axios.post(
+        "http://localhost:3001/api/auth/login",
+        {
+          walletAddress,
+        }
+      );
 
-    const res = await axios.post('/api/ipfs/upload', formData);
-    const cid = res.data.cid;
+      // Store user data in localStorage for persistent login
+      localStorage.setItem("userAddress", walletAddress);
+      localStorage.setItem("userType", response.data.userType);
+      localStorage.setItem("userData", JSON.stringify(response.data));
 
-    // Interact with blockchain to save hash
-    const provider = new ethers.BrowserProvider(window.ethereum);
-    const signer = await provider.getSigner();
-    const contract = new ethers.Contract(CONTRACT_ADDRESS, PatientRecordsABI, signer);
+      // Route to appropriate dashboard based on user type
+      // 1 = Patient, 2 = Doctor (based on your backend API)
+      if (response.data.userType === 1) {
+        navigate("/dashboard");
+      } else if (response.data.userType === 2) {
+        navigate("/new-doctor-dashboard");
+      } else {
+        throw new Error("Unknown user type");
+      }
+    } catch (err) {
+      console.error(err);
 
-    const tx = await contract.setRecord(cid);
-    await tx.wait();
-    alert('File uploaded and record saved on blockchain.');
+      if (err.response && err.response.status === 404) {
+        setError("User not found. Please register first.");
+      } else {
+        setError(err.message || "Failed to connect wallet. Try again.");
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleGrantAccess = async () => {
-    const provider = new ethers.BrowserProvider(window.ethereum);
-    const signer = await provider.getSigner();
-    const contract = new ethers.Contract(CONTRACT_ADDRESS, PatientRecordsABI, signer);
-
-    const tx = await contract.grantAccess(selectedDoctor, Math.floor(new Date(expiresAt).getTime() / 1000));
-    await tx.wait();
-    alert('Access granted to doctor.');
-  };
+  // Emergency direct access links for debugging
+  const goToPatientDashboard = () => navigate("/patient-dashboard");
+  const goToDoctorDashboard = () => navigate("/doctor-dashboard");
+  const goToNewDoctorDashboard = () => navigate("/new-doctor-dashboard");
 
   return (
-    <Container maxWidth="md">
-      <Typography variant="h4" gutterBottom>Patient Dashboard</Typography>
+    <Container maxWidth="sm">
+      <Box
+        sx={{
+          mt: 8,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+        }}
+      >
+        <Typography component="h1" variant="h5">
+          Sign In
+        </Typography>
+        {error && (
+          <Alert severity="error" sx={{ width: "100%", mt: 2 }}>
+            {error}
+          </Alert>
+        )}
 
-      <Card variant="outlined" sx={{ mb: 4 }}>
-        <CardContent>
-          <Typography variant="h6">Upload Medical Record</Typography>
-          <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} md={6}>
-              <input type="file" onChange={handleFileChange} />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <Button variant="contained" onClick={handleUpload}>Upload</Button>
-            </Grid>
-          </Grid>
-        </CardContent>
-      </Card>
+        <Button
+          fullWidth
+          variant="contained"
+          color="primary"
+          onClick={connectWallet}
+          disabled={loading}
+          sx={{ mt: 3, mb: 2 }}
+        >
+          {loading ? "Connecting..." : "Connect with MetaMask"}
+        </Button>
 
-      <Card variant="outlined">
-        <CardContent>
-          <Typography variant="h6">Grant Access to Doctor</Typography>
-          <Grid container spacing={2}>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Select Doctor</InputLabel>
-                <Select
-                  value={selectedDoctor}
-                  onChange={(e) => setSelectedDoctor(e.target.value)}
-                  label="Select Doctor"
-                >
-                  {doctors.map((doc) => (
-                    <MenuItem key={doc.walletAddress} value={doc.walletAddress}>
-                      {doc.name} ({doc.specialization})
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <TextField
-                type="datetime-local"
-                label="Expiry Time"
-                fullWidth
-                InputLabelProps={{ shrink: true }}
-                value={expiresAt}
-                onChange={(e) => setExpiresAt(e.target.value)}
-              />
-            </Grid>
-            <Grid item xs={12} md={2}>
-              <Button variant="contained" onClick={handleGrantAccess} fullWidth>
-                Grant
-              </Button>
-            </Grid>
-          </Grid>
-        </CardContent>
-      </Card>
+        <Box sx={{ mt: 2 }}>
+          <Typography>
+            Don't have an account?{" "}
+            <Link href="/register" underline="hover">
+              Register
+            </Link>
+          </Typography>
+        </Box>
+
+        {/* Debug links for direct access */}
+        <Box
+          sx={{
+            mt: 4,
+            p: 2,
+            backgroundColor: "#f5f5f5",
+            width: "100%",
+            borderRadius: 1,
+          }}
+        >
+          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+            Debug Access (Bypass Login)
+          </Typography>
+          <Box
+            sx={{
+              display: "flex",
+              justifyContent: "space-around",
+              flexWrap: "wrap",
+              gap: 1,
+            }}
+          >
+            <Button
+              variant="outlined"
+              color="secondary"
+              size="small"
+              onClick={goToPatientDashboard}
+            >
+              Patient Dashboard
+            </Button>
+            <Button
+              variant="outlined"
+              color="secondary"
+              size="small"
+              onClick={goToDoctorDashboard}
+            >
+              Old Doctor Dashboard
+            </Button>
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              onClick={goToNewDoctorDashboard}
+            >
+              New Doctor Dashboard
+            </Button>
+          </Box>
+        </Box>
+      </Box>
     </Container>
   );
 };
 
-export default Dashboard;
+export default SignIn;
